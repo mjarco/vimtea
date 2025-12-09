@@ -125,7 +125,7 @@ func TestBufferTabRendering(t *testing.T) {
 	// Check visual length calculation
 	line := buf.Line(0)
 	assert.Contains(t, line, "\t", "Line should contain tab characters")
-	
+
 	// Visual length with 4-space tabs should be greater than buffer length
 	assert.Greater(t, buf.visualLineLength(0), len(line), "Visual line length should be greater than buffer line length")
 }
@@ -134,13 +134,13 @@ func TestBufferReplaceContent(t *testing.T) {
 	buf := newBuffer("Initial text")
 
 	// Manually replace lines
-	buf.lines = []string{"New content"}
+	buf.lines = [][]rune{[]rune("New content")}
 
 	assert.Equal(t, "New content", buf.text(), "Buffer content should match replaced content")
 	assert.Equal(t, 1, buf.lineCount(), "Buffer should have 1 line")
 
 	// Test with multi-line content
-	buf.lines = []string{"Line 1", "Line 2", "Line 3"}
+	buf.lines = [][]rune{[]rune("Line 1"), []rune("Line 2"), []rune("Line 3")}
 	assert.Equal(t, 3, buf.lineCount(), "Buffer should have 3 lines")
 	assert.Equal(t, "Line 2", buf.Line(1), "Line 1 should be 'Line 2'")
 }
@@ -175,10 +175,10 @@ func TestBufferClear(t *testing.T) {
 	// Create a buffer with some content
 	buf := newBuffer("Line 1\nLine 2\nLine 3")
 	assert.Equal(t, 3, buf.lineCount(), "Buffer should have 3 lines initially")
-	
+
 	// Clear the buffer
 	buf.clear()
-	
+
 	// After clearing, the buffer should have a single empty line
 	assert.Equal(t, 1, buf.lineCount(), "Buffer should have 1 line after clear")
 	assert.Equal(t, "", buf.Line(0), "The single line should be empty")

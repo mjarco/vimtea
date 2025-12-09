@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -346,8 +347,8 @@ func (m *editorModel) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ensureCursorVisible()
 			return m, cmd
 		} else {
-			// Insert regular characters
-			if len(msg.String()) == 1 {
+			// Insert regular characters (check rune count for UTF-8 support)
+			if utf8.RuneCountInString(msg.String()) == 1 {
 				return insertCharacter(m, msg.String())
 			}
 		}
@@ -362,8 +363,8 @@ func (m *editorModel) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := binding.Command(m)
 			return m, cmd
 		} else {
-			// Add character to command buffer
-			if len(msg.String()) == 1 {
+			// Add character to command buffer (check rune count for UTF-8 support)
+			if utf8.RuneCountInString(msg.String()) == 1 {
 				return addCommandCharacter(m, msg.String())
 			}
 		}

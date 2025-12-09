@@ -258,10 +258,10 @@ func insertCharacter(model *editorModel, char string) (tea.Model, tea.Cmd) {
 		model.cursor.Col = model.buffer.lineLength(model.cursor.Row)
 	}
 
-	line := model.buffer.Line(model.cursor.Row)
-	newLine := line[:model.cursor.Col] + char + line[model.cursor.Col:]
-	model.buffer.setLine(model.cursor.Row, newLine)
-	model.cursor.Col++
+	// Use insertAt which works with the rune-based buffer
+	model.buffer.insertAt(model.cursor.Row, model.cursor.Col, char)
+	// Move cursor by the number of characters inserted
+	model.cursor.Col += len([]rune(char))
 
 	return model, nil
 }
@@ -270,15 +270,13 @@ func handleInsertBackspace(model *editorModel) tea.Cmd {
 	model.buffer.saveUndoState(model.cursor)
 
 	if model.cursor.Col > 0 {
-
+		// Delete one character before cursor
 		model.buffer.deleteAt(model.cursor.Row, model.cursor.Col-1, model.cursor.Row, model.cursor.Col-1)
 		model.cursor.Col--
 	} else if model.cursor.Row > 0 {
-
+		// Join with previous line
 		prevLineLen := model.buffer.lineLength(model.cursor.Row - 1)
-
 		model.buffer.deleteAt(model.cursor.Row-1, prevLineLen, model.cursor.Row, 0)
-
 		model.cursor.Row--
 		model.cursor.Col = prevLineLen
 	}
@@ -289,7 +287,8 @@ func handleInsertTab(model *editorModel) tea.Cmd {
 	model.buffer.saveUndoState(model.cursor)
 
 	line := model.buffer.Line(model.cursor.Row)
-	newLine := line[:model.cursor.Col] + "\t" + line[model.cursor.Col:]
+	runes := []rune(line)
+	newLine := string(runes[:model.cursor.Col]) + "\t" + string(runes[model.cursor.Col:])
 	model.buffer.setLine(model.cursor.Row, newLine)
 	model.cursor.Col += 1
 	return nil
@@ -299,11 +298,12 @@ func handleInsertEnterKey(m *editorModel) tea.Cmd {
 	m.buffer.saveUndoState(m.cursor)
 
 	currentLine := m.buffer.Line(m.cursor.Row)
+	runes := []rune(currentLine)
 	newLine := ""
 
-	if m.cursor.Col < len(currentLine) {
-		newLine = currentLine[m.cursor.Col:]
-		m.buffer.setLine(m.cursor.Row, currentLine[:m.cursor.Col])
+	if m.cursor.Col < len(runes) {
+		newLine = string(runes[m.cursor.Col:])
+		m.buffer.setLine(m.cursor.Row, string(runes[:m.cursor.Col]))
 	}
 
 	m.buffer.insertLine(m.cursor.Row+1, newLine)
@@ -327,7 +327,8 @@ func moveCursorDown(model *editorModel) tea.Cmd {
 	withCountPrefix(model, func() {
 		if model.cursor.Row < model.buffer.lineCount()-1 {
 			model.cursor.Row++
-			model.cursor.Col = min(model.desiredCol, model.buffer.lineLength(model.cursor.Row)-1)
+			lineLen := model.buffer.lineLength(model.cursor.Row)
+			model.cursor.Col = min(model.desiredCol, max(0, lineLen-1))
 		}
 	})
 	model.ensureCursorVisible()
@@ -338,7 +339,8 @@ func moveCursorUp(model *editorModel) tea.Cmd {
 	withCountPrefix(model, func() {
 		if model.cursor.Row > 0 {
 			model.cursor.Row--
-			model.cursor.Col = min(model.desiredCol, model.buffer.lineLength(model.cursor.Row)-1)
+			lineLen := model.buffer.lineLength(model.cursor.Row)
+			model.cursor.Col = min(model.desiredCol, max(0, lineLen-1))
 		}
 	})
 	model.ensureCursorVisible()
@@ -433,7 +435,11 @@ func addCommandCharacter(model *editorModel, char string) (tea.Model, tea.Cmd) {
 
 func commandBackspace(model *editorModel) tea.Cmd {
 	if len(model.commandBuffer) > 0 {
-		model.commandBuffer = model.commandBuffer[:len(model.commandBuffer)-1]
+		// Remove the last character
+		runes := []rune(model.commandBuffer)
+		if len(runes) > 0 {
+			model.commandBuffer = string(runes[:len(runes)-1])
+		}
 	}
 	return nil
 }
@@ -445,9 +451,10 @@ func moveToNextWordStart(model *editorModel) tea.Cmd {
 	}
 
 	line := model.buffer.Line(currRow)
+	runes := []rune(line)
 	startPos := model.cursor.Col + 1
 
-	if startPos >= len(line) {
+	if startPos >= len(runes) {
 		if currRow < model.buffer.lineCount()-1 {
 			model.cursor.Row++
 			model.cursor.Col = 0
@@ -457,15 +464,15 @@ func moveToNextWordStart(model *editorModel) tea.Cmd {
 		return nil
 	}
 
-	for i := startPos; i < len(line); i++ {
-		if (i == 0 || isWordSeparator(line[i-1])) && !isWordSeparator(line[i]) {
+	for i := startPos; i < len(runes); i++ {
+		if (i == 0 || isWordSeparatorRune(runes[i-1])) && !isWordSeparatorRune(runes[i]) {
 			model.cursor.Col = i
 			model.desiredCol = model.cursor.Col
 			return nil
 		}
 	}
 
-	model.cursor.Col = max(0, len(line)-1)
+	model.cursor.Col = max(0, len(runes)-1)
 	model.desiredCol = model.cursor.Col
 	return nil
 }
@@ -477,6 +484,7 @@ func moveToPrevWordStart(model *editorModel) tea.Cmd {
 	}
 
 	line := model.buffer.Line(currRow)
+	runes := []rune(line)
 	if model.cursor.Col <= 0 {
 		if currRow > 0 {
 			model.cursor.Row--
@@ -489,7 +497,7 @@ func moveToPrevWordStart(model *editorModel) tea.Cmd {
 	}
 
 	for i := model.cursor.Col - 1; i >= 0; i-- {
-		if (i == 0 || isWordSeparator(line[i-1])) && !isWordSeparator(line[i]) {
+		if (i == 0 || isWordSeparatorRune(runes[i-1])) && !isWordSeparatorRune(runes[i]) {
 			model.cursor.Col = i
 			model.desiredCol = model.cursor.Col
 			return nil
@@ -577,8 +585,6 @@ func deleteLine(model *editorModel) tea.Cmd {
 }
 
 func pasteAfter(model *editorModel) tea.Cmd {
-	data := clipboard.Read(clipboard.FmtText)
-	model.yankBuffer = string(data)
 	if model.yankBuffer == "" {
 		return nil
 	}
@@ -592,6 +598,7 @@ func pasteAfter(model *editorModel) tea.Cmd {
 
 	// Character-wise paste
 	currLine := model.buffer.Line(model.cursor.Row)
+	currRunes := []rune(currLine)
 	insertPos := model.cursor.Col
 
 	// Check if the yanked text contains newlines (multi-line character-wise yank)
@@ -602,16 +609,16 @@ func pasteAfter(model *editorModel) tea.Cmd {
 		// Handle the first line - insert at cursor position in current line
 		firstLine := lines[0]
 		remainderOfLine := ""
-		if insertPos < len(currLine) {
-			remainderOfLine = currLine[insertPos+1:]
+		if insertPos < len(currRunes) {
+			remainderOfLine = string(currRunes[insertPos+1:])
 		}
 
 		// Set the first line with the content before cursor + first part of yanked text
-		if insertPos >= len(currLine) {
+		if insertPos >= len(currRunes) {
 			model.buffer.setLine(model.cursor.Row, currLine+firstLine)
 		} else {
 			model.buffer.setLine(model.cursor.Row,
-				currLine[:insertPos+1]+firstLine)
+				string(currRunes[:insertPos+1])+firstLine)
 		}
 
 		// Insert middle lines as new lines
@@ -634,10 +641,10 @@ func pasteAfter(model *editorModel) tea.Cmd {
 		model.cursor.Row = row + len(lines) - 1
 		if len(lines) > 1 {
 			// For multi-line pastes, position at the end of the last line's content
-			model.cursor.Col = len(lines[len(lines)-1])
+			model.cursor.Col = len([]rune(lines[len(lines)-1]))
 		} else {
 			// For single line pastes, position at the end of what was pasted
-			model.cursor.Col = insertPos + len(firstLine) + 1
+			model.cursor.Col = insertPos + len([]rune(firstLine)) + 1
 		}
 
 		if model.mode != ModeInsert && model.cursor.Col > 0 {
@@ -645,14 +652,15 @@ func pasteAfter(model *editorModel) tea.Cmd {
 		}
 	} else {
 		// Single-line paste - original behavior
-		if insertPos >= len(currLine) {
+		yankRunes := []rune(model.yankBuffer)
+		if insertPos >= len(currRunes) {
 			model.buffer.setLine(model.cursor.Row, currLine+model.yankBuffer)
 		} else {
 			model.buffer.setLine(model.cursor.Row,
-				currLine[:insertPos+1]+model.yankBuffer+currLine[insertPos+1:])
+				string(currRunes[:insertPos+1])+model.yankBuffer+string(currRunes[insertPos+1:]))
 		}
 
-		model.cursor.Col = insertPos + len(model.yankBuffer) + 1
+		model.cursor.Col = insertPos + len(yankRunes) + 1
 		if model.mode != ModeInsert && model.cursor.Col > 0 {
 			model.cursor.Col--
 		}
@@ -663,8 +671,6 @@ func pasteAfter(model *editorModel) tea.Cmd {
 }
 
 func pasteBefore(model *editorModel) tea.Cmd {
-	data := clipboard.Read(clipboard.FmtText)
-	model.yankBuffer = string(data)
 	if model.yankBuffer == "" {
 		return nil
 	}
@@ -678,6 +684,7 @@ func pasteBefore(model *editorModel) tea.Cmd {
 
 	// Character-wise paste
 	currLine := model.buffer.Line(model.cursor.Row)
+	currRunes := []rune(currLine)
 	insertPos := model.cursor.Col
 
 	// Check if the yanked text contains newlines (multi-line character-wise yank)
@@ -687,16 +694,16 @@ func pasteBefore(model *editorModel) tea.Cmd {
 
 		// Handle the first line - insert at cursor position in current line
 		firstLine := lines[0]
-		newFirstLine := currLine[:insertPos] + firstLine
+		newFirstLine := string(currRunes[:insertPos]) + firstLine
 		model.buffer.setLine(model.cursor.Row, newFirstLine)
 
 		// If this is the last line, append the remainder of the original line
 		if len(lines) == 1 {
-			model.buffer.setLine(model.cursor.Row, newFirstLine+currLine[insertPos:])
+			model.buffer.setLine(model.cursor.Row, newFirstLine+string(currRunes[insertPos:]))
 		} else {
 			// Handle the last line - combine with remainder of current line
 			lastLineIndex := len(lines) - 1
-			lastLine := lines[lastLineIndex] + currLine[insertPos:]
+			lastLine := lines[lastLineIndex] + string(currRunes[insertPos:])
 
 			// Insert middle and last lines as new lines
 			row := model.cursor.Row
@@ -709,10 +716,10 @@ func pasteBefore(model *editorModel) tea.Cmd {
 		// Position cursor appropriately depending on where the paste ended
 		if len(lines) > 1 {
 			// For multi-line pastes in pasteBefore, cursor stays at the insertion point
-			model.cursor.Col = insertPos + len(firstLine)
+			model.cursor.Col = insertPos + len([]rune(firstLine))
 		} else {
 			// For single line pastes, position at the end of what was pasted
-			model.cursor.Col = insertPos + len(firstLine)
+			model.cursor.Col = insertPos + len([]rune(firstLine))
 		}
 
 		if model.mode != ModeInsert && model.cursor.Col > 0 {
@@ -720,10 +727,11 @@ func pasteBefore(model *editorModel) tea.Cmd {
 		}
 	} else {
 		// Single-line paste - original behavior
+		yankRunes := []rune(model.yankBuffer)
 		model.buffer.setLine(model.cursor.Row,
-			currLine[:insertPos]+model.yankBuffer+currLine[insertPos:])
+			string(currRunes[:insertPos])+model.yankBuffer+string(currRunes[insertPos:]))
 
-		model.cursor.Col = max(insertPos+len(model.yankBuffer)-1, 0)
+		model.cursor.Col = max(insertPos+len(yankRunes)-1, 0)
 	}
 
 	model.ensureCursorVisible()
@@ -731,8 +739,6 @@ func pasteBefore(model *editorModel) tea.Cmd {
 }
 
 func pasteLineAfter(model *editorModel) tea.Cmd {
-	data := clipboard.Read(clipboard.FmtText)
-	model.yankBuffer = string(data)
 	lines := strings.Split(model.yankBuffer[1:], "\n")
 	row := model.cursor.Row
 
@@ -747,8 +753,6 @@ func pasteLineAfter(model *editorModel) tea.Cmd {
 }
 
 func pasteLineBefore(model *editorModel) tea.Cmd {
-	data := clipboard.Read(clipboard.FmtText)
-	model.yankBuffer = string(data)
 	lines := strings.Split(model.yankBuffer[1:], "\n")
 	row := model.cursor.Row
 
@@ -805,9 +809,10 @@ func replaceVisualSelectionWithYank(model *editorModel) tea.Cmd {
 		pasteLineBefore(model)
 	} else {
 		currLine := model.buffer.Line(model.cursor.Row)
+		currRunes := []rune(currLine)
 		insertPos := model.cursor.Col
 		model.buffer.setLine(model.cursor.Row,
-			currLine[:insertPos]+model.yankBuffer+currLine[insertPos:])
+			string(currRunes[:insertPos])+model.yankBuffer+string(currRunes[insertPos:]))
 		model.cursor.Col = max(insertPos+len(model.yankBuffer)-1, 0)
 	}
 
@@ -821,7 +826,9 @@ func performWordOperation(model *editorModel, operation string) tea.Cmd {
 		return nil
 	}
 
-	word := model.buffer.Line(model.cursor.Row)[start:end]
+	line := model.buffer.Line(model.cursor.Row)
+	runes := []rune(line)
+	word := string(runes[start:end])
 
 	if operation == "delete" || operation == "change" {
 		model.buffer.saveUndoState(model.cursor)
@@ -868,35 +875,36 @@ func changeInnerWord(model *editorModel) tea.Cmd {
 
 func getWordBoundary(model *editorModel) (int, int) {
 	line := model.buffer.Line(model.cursor.Row)
-	if len(line) == 0 {
+	runes := []rune(line)
+	if len(runes) == 0 {
 		return 0, 0
 	}
 
 	col := model.cursor.Col
-	if col >= len(line) {
-		col = len(line) - 1
+	if col >= len(runes) {
+		col = len(runes) - 1
 	}
 
 	start := col
 
-	if isWordSeparator(line[col]) {
-		for start > 0 && isWordSeparator(line[start-1]) {
+	if isWordSeparatorRune(runes[col]) {
+		for start > 0 && isWordSeparatorRune(runes[start-1]) {
 			start--
 		}
 	} else {
-		for start > 0 && !isWordSeparator(line[start-1]) {
+		for start > 0 && !isWordSeparatorRune(runes[start-1]) {
 			start--
 		}
 	}
 
 	end := col
 
-	if isWordSeparator(line[col]) {
-		for end < len(line)-1 && isWordSeparator(line[end+1]) {
+	if isWordSeparatorRune(runes[col]) {
+		for end < len(runes)-1 && isWordSeparatorRune(runes[end+1]) {
 			end++
 		}
 	} else {
-		for end < len(line)-1 && !isWordSeparator(line[end+1]) {
+		for end < len(runes)-1 && !isWordSeparatorRune(runes[end+1]) {
 			end++
 		}
 	}
@@ -904,14 +912,14 @@ func getWordBoundary(model *editorModel) (int, int) {
 	return start, end + 1
 }
 
-func isWordSeparator(ch byte) bool {
-	return ch == ' ' || ch == '\t' || ch == '.' || ch == ',' ||
-		ch == ';' || ch == ':' || ch == '!' || ch == '?' ||
-		ch == '(' || ch == ')' || ch == '[' || ch == ']' ||
-		ch == '{' || ch == '}' || ch == '<' || ch == '>' ||
-		ch == '/' || ch == '\\' || ch == '+' || ch == '-' ||
-		ch == '*' || ch == '&' || ch == '^' || ch == '%' ||
-		ch == '$' || ch == '#' || ch == '@' || ch == '=' ||
-		ch == '|' || ch == '`' || ch == '~' || ch == '"' ||
-		ch == '\''
+func isWordSeparatorRune(r rune) bool {
+	return r == ' ' || r == '\t' || r == '.' || r == ',' ||
+		r == ';' || r == ':' || r == '!' || r == '?' ||
+		r == '(' || r == ')' || r == '[' || r == ']' ||
+		r == '{' || r == '}' || r == '<' || r == '>' ||
+		r == '/' || r == '\\' || r == '+' || r == '-' ||
+		r == '*' || r == '&' || r == '^' || r == '%' ||
+		r == '$' || r == '#' || r == '@' || r == '=' ||
+		r == '|' || r == '`' || r == '~' || r == '"' ||
+		r == '\''
 }

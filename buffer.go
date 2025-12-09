@@ -44,21 +44,21 @@ type Buffer interface {
 
 	// CanRedo returns whether there are changes that can be redone
 	CanRedo() bool
-	
+
 	// Clear removes all content from the buffer and resets to empty state
 	Clear() tea.Cmd
 }
 
 // buffer implements the Buffer interface
 type buffer struct {
-	lines     []string      // Text content as lines
+	lines     [][]rune      // Text content as lines (each line is a slice of runes)
 	undoStack []bufferState // Stack of previous buffer states for undo
 	redoStack []bufferState // Stack of undone states for redo
 }
 
 // bufferState represents a snapshot of the buffer for undo/redo
 type bufferState struct {
-	lines  []string // Content at the time of snapshot
+	lines  [][]rune // Content at the time of snapshot
 	cursor Cursor   // Cursor position at the time of snapshot
 }
 
@@ -73,7 +73,12 @@ const tabWidth = 4
 
 // newBuffer creates a new buffer with the given content
 func newBuffer(content string) *buffer {
-	lines := strings.Split(content, "\n")
+	stringLines := strings.Split(content, "\n")
+	// Convert each line from string to []rune
+	lines := make([][]rune, len(stringLines))
+	for i, line := range stringLines {
+		lines[i] = []rune(line)
+	}
 	return &buffer{
 		lines:     lines,
 		undoStack: []bufferState{},
@@ -83,7 +88,12 @@ func newBuffer(content string) *buffer {
 
 // text returns the entire buffer content as a string
 func (b *buffer) text() string {
-	return strings.Join(b.lines, "\n")
+	// Convert each line from []rune to string
+	stringLines := make([]string, len(b.lines))
+	for i, line := range b.lines {
+		stringLines[i] = string(line)
+	}
+	return strings.Join(stringLines, "\n")
 }
 
 // lineCount returns the number of lines in the buffer
@@ -91,11 +101,20 @@ func (b *buffer) lineCount() int {
 	return len(b.lines)
 }
 
-// Line returns the content of the line at the given index
+// Line returns the content of the line at the given index as a string
 // Returns an empty string if the index is out of bounds
 func (b *buffer) Line(idx int) string {
 	if idx < 0 || idx >= len(b.lines) {
 		return ""
+	}
+	return string(b.lines[idx])
+}
+
+// lineRunes returns the content of the line at the given index as []rune
+// Returns nil if the index is out of bounds
+func (b *buffer) lineRunes(idx int) []rune {
+	if idx < 0 || idx >= len(b.lines) {
+		return nil
 	}
 	return b.lines[idx]
 }
@@ -115,7 +134,7 @@ func (b *buffer) visualLineLength(idx int) int {
 	if idx < 0 || idx >= len(b.lines) {
 		return 0
 	}
-	return visualLength(b.lines[idx], 0)
+	return visualLength(string(b.lines[idx]), 0)
 }
 
 // setLine replaces the line at the given index with new content
@@ -124,7 +143,7 @@ func (b *buffer) setLine(idx int, content string) {
 	if idx < 0 || idx >= len(b.lines) {
 		return
 	}
-	b.lines[idx] = content
+	b.lines[idx] = []rune(content)
 }
 
 // insertLine inserts a new line at the given index
@@ -136,7 +155,7 @@ func (b *buffer) insertLine(idx int, content string) {
 
 	// Special case: appending at the end
 	if idx == len(b.lines) {
-		b.lines = append(b.lines, content)
+		b.lines = append(b.lines, []rune(content))
 		return
 	}
 
@@ -144,7 +163,7 @@ func (b *buffer) insertLine(idx int, content string) {
 	b.lines = slices.Insert(
 		b.lines,
 		idx,
-		content,
+		[]rune(content),
 	)
 }
 
@@ -156,13 +175,13 @@ func (b *buffer) deleteLine(idx int) string {
 		return ""
 	}
 
-	line := b.lines[idx]
+	line := string(b.lines[idx])
 
 	// Keep at least one line in the buffer
 	if len(b.lines) > 1 {
 		b.lines = slices.Delete(b.lines, idx, idx+1)
 	} else {
-		b.lines[0] = ""
+		b.lines[0] = []rune("")
 	}
 
 	return line
@@ -170,7 +189,7 @@ func (b *buffer) deleteLine(idx int) string {
 
 // clear removes all content from the buffer and resets to a single empty line
 func (b *buffer) clear() {
-	b.lines = []string{""}
+	b.lines = [][]rune{[]rune("")}
 }
 
 // insertAt inserts text at the specified position
@@ -185,31 +204,43 @@ func (b *buffer) insertAt(row, col int, text string) {
 		return
 	}
 
-	lines := strings.Split(text, "\n")
-	if len(lines) == 1 {
+	stringLines := strings.Split(text, "\n")
+	if len(stringLines) == 1 {
 		// Simple case: inserting text within a single line
-		b.lines[row] = line[:col] + text + line[col:]
+		textRunes := []rune(text)
+		newLine := make([]rune, 0, len(line)+len(textRunes))
+		newLine = append(newLine, line[:col]...)
+		newLine = append(newLine, textRunes...)
+		newLine = append(newLine, line[col:]...)
+		b.lines[row] = newLine
 	} else {
 		// Complex case: inserting multiple lines
 		// This splits the current line at the insertion point
 
 		// First line gets content before col + first line of new text
-		firstLineText := line[:col] + lines[0]
+		firstLineRunes := []rune(stringLines[0])
+		firstLine := make([]rune, 0, col+len(firstLineRunes))
+		firstLine = append(firstLine, line[:col]...)
+		firstLine = append(firstLine, firstLineRunes...)
+
 		// Last line gets last line of new text + content after col
-		lastLineText := lines[len(lines)-1] + line[col:]
+		lastLineRunes := []rune(stringLines[len(stringLines)-1])
+		lastLine := make([]rune, 0, len(lastLineRunes)+len(line)-col)
+		lastLine = append(lastLine, lastLineRunes...)
+		lastLine = append(lastLine, line[col:]...)
 
 		// Replace current line with first line of result
-		b.lines[row] = firstLineText
+		b.lines[row] = firstLine
 
 		// Insert all middle lines (if any)
 		insertPos := row + 1
-		for i := 1; i < len(lines)-1; i++ {
-			b.insertLine(insertPos, lines[i])
+		for i := 1; i < len(stringLines)-1; i++ {
+			b.insertLine(insertPos, stringLines[i])
 			insertPos++
 		}
 
 		// Insert the last line
-		b.insertLine(insertPos, lastLineText)
+		b.lines = slices.Insert(b.lines, insertPos, lastLine)
 	}
 }
 
@@ -221,14 +252,19 @@ func (b *buffer) deleteAt(startRow, startCol, endRow, endCol int) string {
 	return b.deleteRange(start, end)
 }
 
-// areSlicesEqual checks if two string slices have identical content
-func areSlicesEqual(a, b []string) bool {
+// areSlicesEqual checks if two [][]rune slices have identical content
+func areSlicesEqual(a, b [][]rune) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if len(a[i]) != len(b[i]) {
 			return false
+		}
+		for j := range a[i] {
+			if a[i][j] != b[i][j] {
+				return false
+			}
 		}
 	}
 	return true
@@ -248,8 +284,12 @@ func (b *buffer) saveUndoState(cursor Cursor) {
 	}
 
 	// Create a deep copy of the current lines
-	contentCopy := make([]string, len(b.lines))
-	copy(contentCopy, b.lines)
+	contentCopy := make([][]rune, len(b.lines))
+	for i, line := range b.lines {
+		lineCopy := make([]rune, len(line))
+		copy(lineCopy, line)
+		contentCopy[i] = lineCopy
+	}
 
 	// Add the current state to the undo stack
 	b.undoStack = append(b.undoStack, bufferState{lines: contentCopy, cursor: cursor})
@@ -280,8 +320,12 @@ func (b *buffer) undo(c Cursor) tea.Cmd {
 		b.undoStack = b.undoStack[:lastIdx]
 
 		// Save current state to redo stack
-		contentCopy := make([]string, len(b.lines))
-		copy(contentCopy, b.lines)
+		contentCopy := make([][]rune, len(b.lines))
+		for i, line := range b.lines {
+			lineCopy := make([]rune, len(line))
+			copy(lineCopy, line)
+			contentCopy[i] = lineCopy
+		}
 
 		b.redoStack = append(b.redoStack, bufferState{
 			lines:  contentCopy,
@@ -316,8 +360,12 @@ func (b *buffer) redo(c Cursor) tea.Cmd {
 		b.redoStack = b.redoStack[:lastIdx]
 
 		// Save current state to undo stack
-		contentCopy := make([]string, len(b.lines))
-		copy(contentCopy, b.lines)
+		contentCopy := make([][]rune, len(b.lines))
+		for i, line := range b.lines {
+			lineCopy := make([]rune, len(line))
+			copy(lineCopy, line)
+			contentCopy[i] = lineCopy
+		}
 
 		b.undoStack = append(b.undoStack, bufferState{
 			lines:  contentCopy,
@@ -356,17 +404,17 @@ func (b *buffer) getRange(start, end Cursor) string {
 
 	// Handle single line case
 	if start.Row == end.Row {
-		line := b.Line(start.Row)
+		line := b.lineRunes(start.Row)
 		endCol := min(end.Col+1, len(line))
-		return line[start.Col:endCol]
+		return string(line[start.Col:endCol])
 	}
 
 	// Handle multi-line case
 	var result strings.Builder
 
 	// First line (from start column to end of line)
-	firstLine := b.Line(start.Row)
-	result.WriteString(firstLine[start.Col:])
+	firstLine := b.lineRunes(start.Row)
+	result.WriteString(string(firstLine[start.Col:]))
 	result.WriteString("\n")
 
 	// Middle lines (full lines)
@@ -376,9 +424,9 @@ func (b *buffer) getRange(start, end Cursor) string {
 	}
 
 	// Last line (from beginning to end column)
-	lastLine := b.Line(end.Row)
+	lastLine := b.lineRunes(end.Row)
 	endCol := min(end.Col+1, len(lastLine))
-	result.WriteString(lastLine[:endCol])
+	result.WriteString(string(lastLine[:endCol]))
 
 	return result.String()
 }
@@ -409,9 +457,12 @@ func (b *buffer) deleteRange(start, end Cursor) string {
 
 	// Handle single line case
 	if start.Row == end.Row {
-		line := b.Line(start.Row)
+		line := b.lineRunes(start.Row)
 		endCol := min(end.Col+1, len(line))
-		b.setLine(start.Row, line[:start.Col]+line[endCol:])
+		newLine := make([]rune, 0, len(line)-(endCol-start.Col))
+		newLine = append(newLine, line[:start.Col]...)
+		newLine = append(newLine, line[endCol:]...)
+		b.lines[start.Row] = newLine
 		return deletedText
 	}
 
@@ -422,12 +473,15 @@ func (b *buffer) deleteRange(start, end Cursor) string {
 	}
 
 	// Handle multi-line case
-	firstLine := b.Line(start.Row)
-	lastLine := b.Line(end.Row)
+	firstLine := b.lineRunes(start.Row)
+	lastLine := b.lineRunes(end.Row)
 	endCol := min(end.Col+1, len(lastLine))
 
 	// Join the start of first line with the end of last line
-	b.setLine(start.Row, firstLine[:start.Col]+lastLine[endCol:])
+	newLine := make([]rune, 0, start.Col+len(lastLine)-endCol)
+	newLine = append(newLine, firstLine[:start.Col]...)
+	newLine = append(newLine, lastLine[endCol:]...)
+	b.lines[start.Row] = newLine
 
 	// Remove all lines in between
 	for range end.Row - start.Row {

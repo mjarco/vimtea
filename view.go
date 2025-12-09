@@ -38,16 +38,14 @@ func visualLength(s string, startCol int) int {
 // bufferToVisualPosition converts a buffer position to a visual position
 // This accounts for tabs that visually occupy multiple columns
 func bufferToVisualPosition(line string, bufferCol int) int {
-	if bufferCol > len(line) {
-		bufferCol = len(line)
+	runes := []rune(line)
+	if bufferCol > len(runes) {
+		bufferCol = len(runes)
 	}
 
 	visualCol := 0
-	for i, r := range line {
-		if i >= bufferCol {
-			break
-		}
-
+	for charIdx := 0; charIdx < bufferCol; charIdx++ {
+		r := runes[charIdx]
 		if r == '\t' {
 			spaces := tabWidth - (visualCol % tabWidth)
 			visualCol += spaces
@@ -143,14 +141,15 @@ func (m *editorModel) renderLine(line string, rowIdx int, inVisualSelection bool
 	}
 
 	if rowIdx == m.cursor.Row {
-		if len(line) == 0 {
+		lineLen := m.buffer.lineLength(rowIdx)
+		if lineLen == 0 {
 			if m.cursor.Col == 0 {
 				return m.renderCursor(" ")
 			}
 			return ""
 		}
 
-		if m.cursor.Col >= len(line) {
+		if m.cursor.Col >= lineLen {
 			return highlightedLine + m.renderCursor(" ")
 		}
 
@@ -215,12 +214,12 @@ func (m *editorModel) renderRegularCursorLine(line string) string {
 	var sb strings.Builder
 	visualCol := 0
 
-	// Process characters up to the cursor position
-	for i, r := range line {
-		if i >= m.cursor.Col {
-			break
-		}
+	// Convert string to runes to work with character indices
+	runes := []rune(line)
 
+	// Process characters up to the cursor position
+	for charIdx := 0; charIdx < m.cursor.Col && charIdx < len(runes); charIdx++ {
+		r := runes[charIdx]
 		if r == '\t' {
 			spaces := tabWidth - (visualCol % tabWidth)
 			sb.WriteString(strings.Repeat(" ", spaces))
@@ -232,8 +231,8 @@ func (m *editorModel) renderRegularCursorLine(line string) string {
 	}
 
 	// Handle cursor character
-	if m.cursor.Col < len(line) {
-		cursorRune, _ := utf8.DecodeRuneInString(line[m.cursor.Col:])
+	if m.cursor.Col < len(runes) {
+		cursorRune := runes[m.cursor.Col]
 		if cursorRune == '\t' {
 			// For tab, just highlight the first space
 			sb.WriteString(m.renderCursor(" "))
@@ -255,16 +254,15 @@ func (m *editorModel) renderRegularCursorLine(line string) string {
 	}
 
 	// Process remaining characters after cursor
-	if m.cursor.Col < len(line)-1 {
-		for _, r := range line[m.cursor.Col+1:] {
-			if r == '\t' {
-				spaces := tabWidth - (visualCol % tabWidth)
-				sb.WriteString(strings.Repeat(" ", spaces))
-				visualCol += spaces
-			} else {
-				sb.WriteRune(r)
-				visualCol++
-			}
+	for charIdx := m.cursor.Col + 1; charIdx < len(runes); charIdx++ {
+		r := runes[charIdx]
+		if r == '\t' {
+			spaces := tabWidth - (visualCol % tabWidth)
+			sb.WriteString(strings.Repeat(" ", spaces))
+			visualCol += spaces
+		} else {
+			sb.WriteRune(r)
+			visualCol++
 		}
 	}
 
@@ -276,8 +274,10 @@ func (m *editorModel) renderSyntaxHighlightedCursorLine(highlightedLine, plainLi
 	// 1. Render the plain line with proper tab expansion
 	// 2. Apply cursor highlighting at the correct position
 
+	runes := []rune(plainLine)
+
 	// If the cursor is at the end, just append it
-	if m.cursor.Col >= len(plainLine) {
+	if m.cursor.Col >= len(runes) {
 		return highlightedLine + m.renderCursor(" ")
 	}
 
@@ -286,18 +286,19 @@ func (m *editorModel) renderSyntaxHighlightedCursorLine(highlightedLine, plainLi
 
 	// Get the character at the cursor position
 	var cursorChar string
-	if m.cursor.Col < len(plainLine) {
-		if plainLine[m.cursor.Col] == '\t' {
+	if m.cursor.Col < len(runes) {
+		cursorRune := runes[m.cursor.Col]
+		if cursorRune == '\t' {
 			cursorChar = " " // Show first space of tab
 		} else {
-			cursorChar = string(plainLine[m.cursor.Col])
+			cursorChar = string(cursorRune)
 		}
 	} else {
 		cursorChar = " "
 	}
 
 	// If we're dealing with a tab at cursor position, we need special handling
-	if m.cursor.Col < len(plainLine) && plainLine[m.cursor.Col] == '\t' {
+	if m.cursor.Col < len(runes) && runes[m.cursor.Col] == '\t' {
 		return m.renderRegularCursorLine(plainLine)
 	}
 
@@ -329,7 +330,9 @@ func (m *editorModel) renderSyntaxHighlightedCursorLine(highlightedLine, plainLi
 		}
 
 		visibleIdx++
-		i++
+		// Advance by the size of the UTF-8 character
+		_, size := utf8.DecodeRuneInString(highlightedLine[i:])
+		i += size
 	}
 
 	// If we couldn't find the cursor position in the highlighted output,
@@ -356,9 +359,12 @@ func (m *editorModel) renderSyntaxHighlightedCursorLine(highlightedLine, plainLi
 	// Restore ANSI formatting for text after the cursor
 	sb.WriteString(ansiBeforeCursor)
 
-	if cursorHighlightPos+1 < len(highlightedLine) {
-		afterCursorStart := cursorHighlightPos + 1
+	// Skip past the cursor character in the highlighted line
+	// Need to decode the rune to know how many bytes to skip
+	_, cursorRuneSize := utf8.DecodeRuneInString(highlightedLine[cursorHighlightPos:])
+	afterCursorStart := cursorHighlightPos + cursorRuneSize
 
+	if afterCursorStart < len(highlightedLine) {
 		// Skip any ANSI sequences immediately after the cursor
 		for _, match := range ansiMatches {
 			if afterCursorStart >= match[0] && afterCursorStart < match[1] {
@@ -376,13 +382,15 @@ func (m *editorModel) renderSyntaxHighlightedCursorLine(highlightedLine, plainLi
 func (m *editorModel) renderLineWithCursorInVisualSelection(line string, rowIdx int, selStart, selEnd Cursor) string {
 	var sb strings.Builder
 
+	runes := []rune(line)
+
 	// Get selection boundaries in buffer coordinates
 	selBegin := 0
 	if rowIdx == selStart.Row {
 		selBegin = selStart.Col
 	}
 
-	selEndCol := len(line)
+	selEndCol := len(runes)
 	if rowIdx == selEnd.Row {
 		selEndCol = selEnd.Col + 1
 	}
@@ -427,7 +435,10 @@ func (m *editorModel) renderLineWithCursorInVisualSelection(line string, rowIdx 
 
 		visToHighlightIndex[visibleIdx] = i
 		visibleIdx++
-		i++
+
+		// Advance by the size of the UTF-8 character
+		_, size := utf8.DecodeRuneInString(highlightedLine[i:])
+		i += size
 	}
 
 	// Convert buffer positions to visual positions
@@ -466,8 +477,9 @@ func (m *editorModel) renderLineWithCursorInVisualSelection(line string, rowIdx 
 			inSelection = false
 		}
 
-		// Get current character
-		char := string(highlightedLine[i])
+		// Get current character using UTF-8 decoding
+		r, size := utf8.DecodeRuneInString(highlightedLine[i:])
+		char := string(r)
 
 		// Handle cursor character with priority
 		if visPos == visCursorPos {
@@ -492,7 +504,7 @@ func (m *editorModel) renderLineWithCursorInVisualSelection(line string, rowIdx 
 		}
 
 		visPos++
-		i++
+		i += size
 
 		// Restore ANSI styling for next character
 		if !inSelection && visPos != visCursorPos {
@@ -508,22 +520,26 @@ func (m *editorModel) renderLineWithCursorInVisualSelection(line string, rowIdx 
 func (m *editorModel) renderLineWithCursorInVisualSelectionPlain(line string, rowIdx int, selStart, selEnd Cursor) string {
 	var sb strings.Builder
 
+	runes := []rune(line)
+
 	// Get selection boundaries in buffer coordinates
 	selBegin := 0
 	if rowIdx == selStart.Row {
 		selBegin = selStart.Col
 	}
 
-	selEndCol := len(line)
+	selEndCol := len(runes)
 	if rowIdx == selEnd.Row {
 		selEndCol = selEnd.Col + 1
 	}
 
 	// Process the line with proper tab rendering
 	curVisualPos := 0
-	for i, r := range line {
+	for charIdx := 0; charIdx < len(runes); charIdx++ {
+		r := runes[charIdx]
+
 		// Handle character before selection start
-		if i < selBegin {
+		if charIdx < selBegin {
 			if r == '\t' {
 				spaces := tabWidth - (curVisualPos % tabWidth)
 				sb.WriteString(strings.Repeat(" ", spaces))
@@ -536,7 +552,7 @@ func (m *editorModel) renderLineWithCursorInVisualSelectionPlain(line string, ro
 		}
 
 		// Handle cursor character
-		if i == m.cursor.Col {
+		if charIdx == m.cursor.Col {
 			// Get appropriate character display
 			var cursorChar string
 			if r == '\t' {
@@ -565,7 +581,7 @@ func (m *editorModel) renderLineWithCursorInVisualSelectionPlain(line string, ro
 		}
 
 		// Handle selection (non-cursor)
-		if i < selEndCol {
+		if charIdx < selEndCol {
 			if r == '\t' {
 				spaces := tabWidth - (curVisualPos % tabWidth)
 				sb.WriteString(m.selectedStyle.Render(strings.Repeat(" ", spaces)))
@@ -594,13 +610,15 @@ func (m *editorModel) renderLineWithCursorInVisualSelectionPlain(line string, ro
 func (m *editorModel) renderLineInVisualSelection(line string, rowIdx int, selStart, selEnd Cursor) string {
 	var sb strings.Builder
 
+	runes := []rune(line)
+
 	// Get selection boundaries in buffer coordinates
 	selBegin := 0
 	if rowIdx == selStart.Row {
 		selBegin = selStart.Col
 	}
 
-	selEndCol := len(line)
+	selEndCol := len(runes)
 	if rowIdx == selEnd.Row {
 		selEndCol = selEnd.Col + 1
 	}
@@ -645,7 +663,10 @@ func (m *editorModel) renderLineInVisualSelection(line string, rowIdx int, selSt
 
 		visToHighlightIndex[visibleIdx] = i
 		visibleIdx++
-		i++
+
+		// Advance by the size of the UTF-8 character
+		_, size := utf8.DecodeRuneInString(highlightedLine[i:])
+		i += size
 	}
 
 	// Convert buffer positions to visual positions
@@ -683,8 +704,9 @@ func (m *editorModel) renderLineInVisualSelection(line string, rowIdx int, selSt
 			inSelection = false
 		}
 
-		// Get current character
-		char := string(highlightedLine[i])
+		// Get current character using UTF-8 decoding
+		r, size := utf8.DecodeRuneInString(highlightedLine[i:])
+		char := string(r)
 
 		if inSelection {
 			// In selection
@@ -698,7 +720,7 @@ func (m *editorModel) renderLineInVisualSelection(line string, rowIdx int, selSt
 		}
 
 		visPos++
-		i++
+		i += size
 
 		// Restore ANSI styling for next character
 		if !inSelection {
@@ -714,22 +736,26 @@ func (m *editorModel) renderLineInVisualSelection(line string, rowIdx int, selSt
 func (m *editorModel) renderLineInVisualSelectionPlain(line string, rowIdx int, selStart, selEnd Cursor) string {
 	var sb strings.Builder
 
+	runes := []rune(line)
+
 	// Get selection boundaries in buffer coordinates
 	selBegin := 0
 	if rowIdx == selStart.Row {
 		selBegin = selStart.Col
 	}
 
-	selEndCol := len(line)
+	selEndCol := len(runes)
 	if rowIdx == selEnd.Row {
 		selEndCol = selEnd.Col + 1
 	}
 
 	// Process the line with proper tab rendering
 	curVisualPos := 0
-	for i, r := range line {
+	for charIdx := 0; charIdx < len(runes); charIdx++ {
+		r := runes[charIdx]
+
 		// Handle character before selection start
-		if i < selBegin {
+		if charIdx < selBegin {
 			if r == '\t' {
 				spaces := tabWidth - (curVisualPos % tabWidth)
 				sb.WriteString(strings.Repeat(" ", spaces))
@@ -742,7 +768,7 @@ func (m *editorModel) renderLineInVisualSelectionPlain(line string, rowIdx int, 
 		}
 
 		// Handle selection
-		if i < selEndCol {
+		if charIdx < selEndCol {
 			if r == '\t' {
 				spaces := tabWidth - (curVisualPos % tabWidth)
 				sb.WriteString(m.selectedStyle.Render(strings.Repeat(" ", spaces)))

@@ -54,7 +54,7 @@ func TestPasteCommands(t *testing.T) {
 	require.NotNil(t, pasteBeforeBinding, "Binding for 'P' not found")
 
 	// Reset buffer
-	model.buffer.lines = []string{"Line 1", "Line 2", "Line 3"}
+	model.buffer.lines = [][]rune{[]rune("Line 1"), []rune("Line 2"), []rune("Line 3")}
 	model.cursor = newCursor(0, 5)
 	pasteBeforeBinding.Command(model)
 
@@ -63,7 +63,7 @@ func TestPasteCommands(t *testing.T) {
 
 	// Test line-wise paste
 	// Reset buffer
-	model.buffer.lines = []string{"Line 1", "Line 2", "Line 3"}
+	model.buffer.lines = [][]rune{[]rune("Line 1"), []rune("Line 2"), []rune("Line 3")}
 	model.yankBuffer = "\nYanked line"
 	model.cursor = newCursor(1, 0)
 	pasteAfterBinding.Command(model)

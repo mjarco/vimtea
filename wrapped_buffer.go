@@ -17,7 +17,11 @@ func (w *wrappedBuffer) Text() string {
 
 // Lines returns all lines in the buffer as a string slice
 func (w *wrappedBuffer) Lines() []string {
-	return w.m.buffer.lines
+	lines := make([]string, len(w.m.buffer.lines))
+	for i, line := range w.m.buffer.lines {
+		lines[i] = string(line)
+	}
+	return lines
 }
 
 // LineCount returns the number of lines in the buffer
